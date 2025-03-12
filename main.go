@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,36 +14,40 @@ func main() {
 		fmt.Printf("error reading file: %v", err)
 		return
 	}
-	buffer := make([]byte, 8)
 
-	currentLine := ""
-
-	for {
-		read, err := messages.Read(buffer)
-		if err != nil {
-			if err == io.EOF && currentLine == "" {
-				fmt.Printf("read: %s\n", currentLine)
-			}
-			return
-		}
-
-		text := string(buffer[:read])
-
-		parts := strings.Split(text, "\n")
-
-		for i := 0; i < len(parts)-1; i++ {
-			currentLine += parts[i]
-			fmt.Printf("read: %s\n", currentLine)
-			currentLine = ""
-		}
-
-		if len(text) > 0 && text[len(text)-1] == '\n' {
-			currentLine += parts[len(parts)-1]
-			fmt.Printf("read: %s\n", currentLine)
-			currentLine = ""
-		} else {
-			currentLine += parts[len(parts)-1]
-
-		}
+	msg := getLinesChannel(messages)
+	for line := range msg {
+		fmt.Printf("read: %v\n", line)
 	}
+}
+
+func getLinesChannel(f io.ReadCloser) <-chan string {
+	lines := make(chan string)
+	go func() {
+		defer f.Close()
+		defer close(lines)
+		currentLineContents := ""
+		for {
+			buffer := make([]byte, 8, 8)
+			read, err := f.Read(buffer)
+			if err != nil {
+				if currentLineContents != "" {
+					lines <- currentLineContents
+				}
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				fmt.Printf("error: %s\n", err.Error())
+				return
+			}
+			str := string(buffer[:read])
+			parts := strings.Split(str, "\n")
+			for i := 0; i < len(parts)-1; i++ {
+				lines <- fmt.Sprintf("%s%s", currentLineContents, parts[i])
+				currentLineContents = ""
+			}
+			currentLineContents += parts[len(parts)-1]
+		}
+	}()
+	return lines
 }
