@@ -1,9 +1,13 @@
 package headers
 
 import (
+	"bytes"
 	"fmt"
+	"slices"
 	"strings"
 )
+
+const crlf = "\r\n"
 
 type Headers map[string]string
 
@@ -12,31 +16,56 @@ func NewHeaders() Headers {
 }
 
 func (h Headers) Parse(data []byte) (n int, done bool, err error) {
-	dataString := string(data)
-
-	if strings.Contains(dataString, "\r\n") {
-		idx := strings.Index(dataString, "\r\n")
-		if idx == 0 {
-			return idx, true, nil
-		}
-		if idx > 0 {
-			header := dataString[:idx]
-			slice := strings.SplitN(header, ":", 2)
-			colonIdx := strings.Index(header, ":")
-			if colonIdx > 0 && header[colonIdx-1] == ' ' {
-				return 0, false, fmt.Errorf("invalid space before colon")
-			}
-			if len(slice) != 2 {
-				return 0, false, fmt.Errorf("missing colon")
-			}
-			key := strings.TrimSpace(slice[0])
-			value := strings.TrimSpace(slice[1])
-
-			h[key] = value
-		}
-
-		return idx + len("\r\n"), false, nil
+	idx := bytes.Index(data, []byte(crlf))
+	if idx == -1 {
+		return 0, false, nil
+	}
+	if idx == 0 {
+		// the empty line
+		// headers are done, consume the CRLF
+		return 2, true, nil
 	}
 
-	return 0, false, nil
+	parts := bytes.SplitN(data[:idx], []byte(":"), 2)
+	key := strings.ToLower(string(parts[0]))
+
+	if key != strings.TrimRight(key, " ") {
+		return 0, false, fmt.Errorf("invalid header name: %s", key)
+	}
+
+	value := bytes.TrimSpace(parts[1])
+	key = strings.TrimSpace(key)
+	if !validTokens([]byte(key)) {
+		return 0, false, fmt.Errorf("invalid header token found: %s", key)
+	}
+	h.Set(key, string(value))
+	return idx + 2, false, nil
+}
+
+func (h Headers) Set(key, value string) {
+	key = strings.ToLower(key)
+	h[key] = value
+}
+
+var tokenChars = []byte{'!', '#', '$', '%', '&', '\'', '*', '+', '-', '.', '^', '_', '`', '|', '~'}
+
+// validTokens checks if the data contains only valid tokens
+// or characters that are allowed in a token
+func validTokens(data []byte) bool {
+	for _, c := range data {
+		if !isTokenChar(c) {
+			return false
+		}
+	}
+	return true
+}
+
+func isTokenChar(c byte) bool {
+	if c >= 'A' && c <= 'Z' ||
+		c >= 'a' && c <= 'z' ||
+		c >= '0' && c <= '9' {
+		return true
+	}
+
+	return slices.Contains(tokenChars, c)
 }
